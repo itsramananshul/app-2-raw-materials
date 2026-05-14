@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RawMaterialView } from "@/lib/types";
 import { ActivityFeed, type ActivityEntry } from "./ActivityFeed";
+import { ApiKeyManager } from "./ApiKeyManager";
 import { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
 import { MaterialsTable } from "./MaterialsTable";
 import { QuantityModal, type ActionKind } from "./QuantityModal";
@@ -58,6 +59,7 @@ export function Dashboard({ instanceName }: DashboardProps) {
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [apiKeysOpen, setApiKeysOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -260,6 +262,13 @@ export function Dashboard({ instanceName }: DashboardProps) {
               Current Instance: {instanceName}
             </span>
             <ConnectionStatus state={connectionState} />
+            <button
+              type="button"
+              onClick={() => setApiKeysOpen(true)}
+              className="inline-flex items-center gap-1 rounded-full bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-700 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+            >
+              <span aria-hidden>🔑</span> API Keys
+            </button>
           </div>
         </div>
 
@@ -349,6 +358,11 @@ export function Dashboard({ instanceName }: DashboardProps) {
       />
 
       <Toast toast={toast} onClose={() => setToast(null)} />
+
+      <ApiKeyManager
+        open={apiKeysOpen}
+        onClose={() => setApiKeysOpen(false)}
+      />
     </main>
   );
 }
