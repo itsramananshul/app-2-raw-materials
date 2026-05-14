@@ -2,8 +2,6 @@
 
 import type { ActionKind } from "./QuantityModal";
 
-export type ActivityResult = "success" | "failure";
-
 export interface ActivityEntry {
   id: string;
   timestamp: Date;
@@ -11,8 +9,8 @@ export interface ActivityEntry {
   materialName: string;
   sku: string;
   quantity: number;
-  unit: string;
-  result: ActivityResult;
+  unit?: string;
+  result: "success" | "failure";
   message?: string;
 }
 
@@ -20,87 +18,86 @@ interface ActivityFeedProps {
   entries: ActivityEntry[];
 }
 
-const actionStyles: Record<ActionKind, string> = {
-  consume: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
-  reserve: "bg-sky-500/10 text-sky-300 ring-sky-500/30",
-  release: "bg-indigo-500/10 text-indigo-300 ring-indigo-500/30",
-  restock: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
+const actionLabel: Record<ActionKind, string> = {
+  reserve: "Reserved",
+  release: "Released",
+  consume: "Consumed",
+  restock: "Restocked",
+  adjust: "Adjusted to",
 };
 
-const resultStyles: Record<ActivityResult, string> = {
-  success: "bg-emerald-500/10 text-emerald-300 ring-emerald-500/30",
-  failure: "bg-rose-500/10 text-rose-300 ring-rose-500/30",
+const actionDot: Record<ActionKind, string> = {
+  reserve: "#3b82f6",
+  release: "#6b7280",
+  consume: "#0d9488",
+  restock: "#14b8a6",
+  adjust: "#14b8a6",
 };
 
-function formatTime(ts: Date): string {
-  return ts.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function formatQuantity(q: number): string {
-  return q.toLocaleString(undefined, { maximumFractionDigits: 2 });
+function formatTime(d: Date): string {
+  try {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch {
+    return d.toISOString().slice(11, 19);
+  }
 }
 
 export function ActivityFeed({ entries }: ActivityFeedProps) {
   return (
-    <section
-      aria-label="Recent activity"
-      className="rounded-xl bg-slate-900/40 ring-1 ring-slate-800"
-    >
-      <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+    <section className="h-full rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+      <header className="mb-3 flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-slate-100">
-            Recent Activity
-          </h2>
-          <p className="text-xs text-slate-500">
-            Local session log. Clears when you reload the page.
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            Live
           </p>
+          <h2 className="text-lg font-semibold text-gray-900">Activity Feed</h2>
         </div>
-        <span className="rounded-full bg-slate-800/80 px-2 py-0.5 text-xs font-medium text-slate-300">
-          {entries.length}
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          Live
         </span>
       </header>
-
       {entries.length === 0 ? (
-        <div className="px-4 py-10 text-center text-sm text-slate-500">
-          No activity yet. Consume, reserve, release, or restock to log events.
-        </div>
+        <p className="py-6 text-center text-sm text-gray-400">
+          No actions yet. Reserve, release, consume, restock, or adjust a
+          material to see it here.
+        </p>
       ) : (
-        <ul className="max-h-80 divide-y divide-slate-800/70 overflow-y-auto">
+        <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
           {entries.map((e) => (
             <li
               key={e.id}
-              className="grid grid-cols-[auto_auto_1fr_auto_auto] items-center gap-3 px-4 py-2.5 text-sm"
+              className={`flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 ${
+                e.result === "failure" ? "border-rose-100 bg-rose-50/40" : ""
+              }`}
             >
-              <span className="font-mono text-xs text-slate-500 tabular-nums">
-                {formatTime(e.timestamp)}
-              </span>
               <span
-                className={`inline-flex rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${actionStyles[e.action]}`}
-              >
-                {e.action}
-              </span>
-              <span className="min-w-0 truncate text-slate-200">
-                {e.materialName}{" "}
-                <span className="font-mono text-xs text-slate-500">
-                  · {e.sku}
-                </span>
-                {e.result === "failure" && e.message ? (
-                  <span className="ml-1 text-xs text-rose-300/80">
-                    — {e.message}
+                aria-hidden
+                className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
+                style={{
+                  background:
+                    e.result === "failure" ? "#ef4444" : actionDot[e.action],
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-gray-800">
+                  <span className="font-medium">{actionLabel[e.action]}</span>{" "}
+                  <span className="font-medium tabular-nums">{e.quantity}</span>
+                  {e.unit ? ` ${e.unit}` : ""}
+                  {" × "}
+                  <span className="text-gray-700">{e.materialName}</span>
+                  <span className="ml-1 font-mono text-[10px] text-gray-400">
+                    {e.sku}
                   </span>
+                </p>
+                {e.result === "failure" && e.message ? (
+                  <p className="mt-0.5 truncate text-xs text-rose-600">
+                    {e.message}
+                  </p>
                 ) : null}
-              </span>
-              <span className="font-mono text-xs tabular-nums text-slate-400">
-                ×{formatQuantity(e.quantity)} {e.unit}
-              </span>
-              <span
-                className={`inline-flex rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset ${resultStyles[e.result]}`}
-              >
-                {e.result}
+              </div>
+              <span className="shrink-0 text-[11px] tabular-nums text-gray-400">
+                {formatTime(e.timestamp)}
               </span>
             </li>
           ))}

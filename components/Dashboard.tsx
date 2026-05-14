@@ -4,11 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RawMaterialView } from "@/lib/types";
 import { ActivityFeed, type ActivityEntry } from "./ActivityFeed";
 import { ApiKeyManager } from "./ApiKeyManager";
-import { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
-import { MaterialsTable } from "./MaterialsTable";
+import { ComingSoon } from "./ComingSoon";
+import { DonutChart } from "./DonutChart";
+import { FilterDropdown } from "./FilterDropdown";
+import { MaterialPlans, type StatusFilter } from "./MaterialPlans";
+import { MetricCard } from "./MetricCard";
 import { QuantityModal, type ActionKind } from "./QuantityModal";
-import { StatCard } from "./StatCard";
 import { Toast, type ToastState } from "./Toast";
+import { TopNav, type NavView } from "./TopNav";
+import { TopMaterials } from "./TopMaterials";
 
 interface DashboardProps {
   instanceName: string;
@@ -17,45 +21,81 @@ interface DashboardProps {
 interface ModalState {
   material: RawMaterialView;
   action: ActionKind;
+  defaultQuantity?: number;
 }
 
 const POLL_INTERVAL_MS = 5000;
-const STALE_THRESHOLD_MS = 15000;
 const ACTIVITY_MAX = 50;
 
 const actionVerbPast: Record<ActionKind, string> = {
-  consume: "Consumed",
   reserve: "Reserved",
   release: "Released",
+  consume: "Consumed",
   restock: "Restocked",
+  adjust: "Adjusted",
 };
 
 const actionVerbFail: Record<ActionKind, string> = {
-  consume: "Consume failed",
   reserve: "Reserve failed",
   release: "Release failed",
+  consume: "Consume failed",
   restock: "Restock failed",
+  adjust: "Adjust failed",
 };
 
 function newActivityId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function formatNumber(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const COMING_SOON_COPY: Record<
+  Exclude<NavView, "dashboard">,
+  { title: string; description: string }
+> = {
+  materials: {
+    title: "Materials — coming soon",
+    description:
+      "A full raw-materials catalog editor with bulk upload, categories, and per-supplier pricing.",
+  },
+  suppliers: {
+    title: "Suppliers — coming soon",
+    description:
+      "Supplier directory, contact details, lead-time tracking, and rating history.",
+  },
+  "purchase-orders": {
+    title: "Purchase Orders — coming soon",
+    description:
+      "Create, approve, and track purchase orders, plus incoming-stock forecasting.",
+  },
+  "inventory-plan": {
+    title: "Inventory Plan — coming soon",
+    description:
+      "Demand forecasting and automated reorder suggestions based on consumption history.",
+  },
+};
+
+const NAV_HEADER_LABEL: Record<Exclude<NavView, "dashboard">, string> = {
+  materials: "Materials",
+  suppliers: "Suppliers",
+  "purchase-orders": "Purchase Orders",
+  "inventory-plan": "Inventory Plan",
+};
+
+function scrollToPlans() {
+  const el = document.getElementById("material-plans");
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 export function Dashboard({ instanceName }: DashboardProps) {
   const [materials, setMaterials] = useState<RawMaterialView[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const [view, setView] = useState<NavView>("dashboard");
+  const [filter, setFilter] = useState<StatusFilter>("ALL");
+  const [expanded, setExpanded] = useState(false);
+
   const [modal, setModal] = useState<ModalState | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
-  const [lastFetchOk, setLastFetchOk] = useState<boolean>(true);
-  const [now, setNow] = useState<Date>(new Date());
 
   const [toast, setToast] = useState<ToastState | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
@@ -81,11 +121,8 @@ export function Dashboard({ instanceName }: DashboardProps) {
       const data: RawMaterialView[] = await res.json();
       setMaterials(data);
       setLoadError(null);
-      setLastFetchOk(true);
-      setLastSuccessAt(new Date());
     } catch (err) {
       if ((err as { name?: string }).name === "AbortError") return;
-      setLastFetchOk(false);
       setLoadError(
         err instanceof Error ? err.message : "Failed to load materials",
       );
@@ -94,13 +131,11 @@ export function Dashboard({ instanceName }: DashboardProps) {
 
   useEffect(() => {
     void fetchMaterials();
-    const pollId = setInterval(() => {
+    const id = setInterval(() => {
       void fetchMaterials();
     }, POLL_INTERVAL_MS);
-    const tickId = setInterval(() => setNow(new Date()), 1000);
     return () => {
-      clearInterval(pollId);
-      clearInterval(tickId);
+      clearInterval(id);
       abortRef.current?.abort();
     };
   }, [fetchMaterials]);
@@ -111,33 +146,35 @@ export function Dashboard({ instanceName }: DashboardProps) {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const connectionState: ConnectionState = useMemo(() => {
-    if (!lastSuccessAt) return "connecting";
-    const age = now.getTime() - lastSuccessAt.getTime();
-    if (age > STALE_THRESHOLD_MS) return "stale";
-    if (!lastFetchOk) return "reconnecting";
-    return "live";
-  }, [lastSuccessAt, lastFetchOk, now]);
-
-  const lastRefreshedAgo = useMemo(() => {
-    if (!lastSuccessAt) return null;
-    const seconds = Math.max(
-      0,
-      Math.floor((now.getTime() - lastSuccessAt.getTime()) / 1000),
-    );
-    return seconds;
-  }, [lastSuccessAt, now]);
-
   const stats = useMemo(() => {
     const list = materials ?? [];
-    const totalSkus = list.length;
-    const totalOnHand = list.reduce((sum, m) => sum + m.on_hand, 0);
-    const criticalMaterials = list.filter(
-      (m) => m.status === "OUT_OF_STOCK",
-    ).length;
-    const lowStockAlerts = list.filter((m) => m.status === "LOW_STOCK").length;
-    return { totalSkus, totalOnHand, criticalMaterials, lowStockAlerts };
+    const totalMaterials = list.length;
+    const lowStockAlerts = list.filter((m) => m.status !== "OK").length;
+    const inStock = list.filter((m) => m.status === "OK").length;
+    const lowOnly = list.filter((m) => m.status === "LOW_STOCK").length;
+    const outOnly = list.filter((m) => m.status === "OUT_OF_STOCK").length;
+    const suppliersActive = new Set(
+      list.map((m) => m.supplier).filter((s) => typeof s === "string" && s.length > 0),
+    ).size;
+    return {
+      totalMaterials,
+      lowStockAlerts,
+      inStock,
+      lowOnly,
+      outOnly,
+      suppliersActive,
+    };
   }, [materials]);
+
+  const filterCounts: Record<StatusFilter, number> = useMemo(
+    () => ({
+      ALL: stats.totalMaterials,
+      OK: stats.inStock,
+      LOW_STOCK: stats.lowOnly,
+      OUT_OF_STOCK: stats.outOnly,
+    }),
+    [stats],
+  );
 
   const appendActivity = useCallback((entry: ActivityEntry) => {
     setActivity((prev) => [entry, ...prev].slice(0, ACTIVITY_MAX));
@@ -146,7 +183,11 @@ export function Dashboard({ instanceName }: DashboardProps) {
   const handleAction = useCallback(
     (material: RawMaterialView, action: ActionKind) => {
       setActionError(null);
-      setModal({ material, action });
+      setModal({
+        material,
+        action,
+        defaultQuantity: action === "adjust" ? material.on_hand : undefined,
+      });
     },
     [],
   );
@@ -197,7 +238,7 @@ export function Dashboard({ instanceName }: DashboardProps) {
         setToast({
           id: Date.now(),
           kind: "success",
-          message: `${actionVerbPast[action]} ${formatNumber(quantity)} ${material.unit} of ${material.name}.`,
+          message: `${actionVerbPast[action]} ${quantity} ${material.unit} × ${material.name}.`,
         });
         setModal(null);
         void fetchMaterials();
@@ -227,130 +268,156 @@ export function Dashboard({ instanceName }: DashboardProps) {
     [modal, fetchMaterials, appendActivity],
   );
 
+  const handleViewLowStock = useCallback(() => {
+    setFilter("LOW_STOCK");
+    setExpanded(true);
+    setTimeout(scrollToPlans, 50);
+  }, []);
+
+  const handleViewAll = useCallback(() => {
+    setFilter("ALL");
+    setExpanded(true);
+    setTimeout(scrollToPlans, 50);
+  }, []);
+
   return (
-    <main className="mx-auto max-w-[1400px] px-6 py-8">
-      <header className="flex flex-col gap-4 border-b border-slate-800 pb-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-indigo-400">
-              Raw Materials Inventory
-            </p>
-            <h1 className="mt-1 text-3xl font-semibold text-slate-50">
-              {instanceName}{" "}
-              <span className="text-slate-500">— Raw Materials</span>
-            </h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Standalone raw-materials instance. Auto-refreshes every 5 seconds.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              className="inline-flex items-center gap-2 rounded-full bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-300 ring-1 ring-inset ring-slate-700"
-              title="Set via INSTANCE_NAME env var. Read-only in the UI."
-            >
-              <svg
-                aria-hidden
-                viewBox="0 0 24 24"
-                className="h-3.5 w-3.5 text-slate-500"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <rect x="5" y="11" width="14" height="10" rx="2" />
-                <path d="M8 11V8a4 4 0 1 1 8 0v3" />
-              </svg>
-              Current Instance: {instanceName}
-            </span>
-            <ConnectionStatus state={connectionState} />
-            <button
-              type="button"
-              onClick={() => setApiKeysOpen(true)}
-              className="inline-flex items-center gap-1 rounded-full bg-slate-800/80 px-3 py-1 text-xs font-medium text-slate-200 ring-1 ring-inset ring-slate-700 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-            >
-              <span aria-hidden>🔑</span> API Keys
-            </button>
-          </div>
-        </div>
+    <div>
+      <TopNav
+        instanceName={instanceName}
+        currentView={view}
+        onChangeView={(v) => {
+          setView(v);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        onOpenApiKeys={() => setApiKeysOpen(true)}
+      />
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
-          <span>
-            <span className="text-slate-500">Last refreshed:</span>{" "}
-            <span className="text-slate-300 tabular-nums">
-              {lastSuccessAt ? lastSuccessAt.toLocaleTimeString() : "—"}
-            </span>
-            {lastRefreshedAgo !== null ? (
-              <span className="ml-1 text-slate-500">
-                ({lastRefreshedAgo}s ago)
-              </span>
-            ) : null}
-          </span>
-          <span className="text-slate-700">·</span>
-          <span>
-            Polling every {Math.round(POLL_INTERVAL_MS / 1000)} s · stale after{" "}
-            {Math.round(STALE_THRESHOLD_MS / 1000)} s
-          </span>
-        </div>
-      </header>
-
-      <section className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total SKUs" value={stats.totalSkus} />
-        <StatCard
-          label="Total On Hand"
-          value={formatNumber(stats.totalOnHand)}
-          tone="success"
-          hint="Sum across all units"
-        />
-        <StatCard
-          label="Critical Materials"
-          value={stats.criticalMaterials}
-          tone={stats.criticalMaterials > 0 ? "danger" : "default"}
-          hint={
-            stats.criticalMaterials > 0
-              ? "OUT_OF_STOCK count"
-              : "Nothing out of stock"
-          }
-        />
-        <StatCard
-          label="Low Stock Alerts"
-          value={stats.lowStockAlerts}
-          tone={stats.lowStockAlerts > 0 ? "warning" : "default"}
-          hint={
-            stats.lowStockAlerts > 0
-              ? "LOW_STOCK count"
-              : "All SKUs healthy"
-          }
-        />
-      </section>
-
-      {loadError ? (
-        <div className="mt-6 rounded-md bg-rose-500/10 px-4 py-3 text-sm text-rose-300 ring-1 ring-inset ring-rose-500/30">
-          Failed to load materials: {loadError}
-        </div>
-      ) : null}
-
-      <section className="mt-6">
-        {materials === null && !loadError ? (
-          <div className="rounded-xl bg-slate-900/40 px-4 py-12 text-center text-sm text-slate-500 ring-1 ring-slate-800">
-            Loading raw materials…
-          </div>
+      <main className="mx-auto max-w-7xl px-6 py-6">
+        {view !== "dashboard" ? (
+          <>
+            <div className="mb-6 flex flex-col gap-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                {NAV_HEADER_LABEL[view]}
+              </p>
+              <h1 className="text-2xl font-bold text-gray-900">
+                {NAV_HEADER_LABEL[view]}
+              </h1>
+            </div>
+            <ComingSoon
+              title={COMING_SOON_COPY[view].title}
+              description={COMING_SOON_COPY[view].description}
+              onBack={() => setView("dashboard")}
+            />
+          </>
         ) : (
-          <MaterialsTable
-            materials={materials ?? []}
-            onAction={handleAction}
-          />
-        )}
-      </section>
+          <>
+            <div className="mb-6 flex items-end justify-between gap-3">
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Overview
+                </p>
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {instanceName} Dashboard
+                </h1>
+              </div>
+              <FilterDropdown
+                value={filter}
+                counts={filterCounts}
+                onChange={setFilter}
+              />
+            </div>
 
-      <section className="mt-6">
-        <ActivityFeed entries={activity} />
-      </section>
+            {loadError ? (
+              <div className="mb-6 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-inset ring-rose-200">
+                Failed to load materials: {loadError}
+              </div>
+            ) : null}
+
+            <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <MetricCard
+                label="Total Materials"
+                value={stats.totalMaterials}
+                onViewDetail={handleViewAll}
+              />
+              <MetricCard
+                label="Low-Stock Alerts"
+                value={stats.lowStockAlerts}
+                hint={
+                  stats.lowStockAlerts > 0 ? "Needs attention" : "All healthy"
+                }
+                onViewDetail={handleViewLowStock}
+              />
+              <MetricCard
+                label="Pending Orders"
+                value={0}
+                hint="No upcoming orders"
+              />
+              <MetricCard
+                label="Suppliers Active"
+                value={stats.suppliersActive}
+                hint="Across all materials"
+              />
+            </section>
+
+            <section className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-5">
+              <div className="lg:col-span-3">
+                <MaterialPlans
+                  materials={materials ?? []}
+                  loading={materials === null}
+                  filter={filter}
+                  expanded={expanded}
+                  onAction={handleAction}
+                  onToggleExpand={() => setExpanded((v) => !v)}
+                />
+              </div>
+              <div className="flex flex-col gap-4 lg:col-span-2">
+                <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+                  <header className="mb-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+                        Distribution
+                      </p>
+                      <h2 className="text-lg font-semibold text-gray-900">
+                        Stock Status
+                      </h2>
+                    </div>
+                  </header>
+                  <DonutChart
+                    total={stats.totalMaterials}
+                    centerLabel="SKUs"
+                    slices={[
+                      { label: "In Stock", value: stats.inStock, hex: "#14b8a6" },
+                      { label: "Low Stock", value: stats.lowOnly, hex: "#f59e0b" },
+                      {
+                        label: "Out of Stock",
+                        value: stats.outOnly,
+                        hex: "#ef4444",
+                      },
+                    ]}
+                  />
+                </section>
+                <ActivityFeed entries={activity} />
+              </div>
+            </section>
+
+            <section className="mb-6">
+              <TopMaterials
+                materials={materials ?? []}
+                onAction={handleAction}
+                onViewAll={handleViewAll}
+              />
+            </section>
+          </>
+        )}
+      </main>
 
       <QuantityModal
         open={modal !== null}
         action={modal?.action ?? "reserve"}
         materialName={modal?.material.name ?? ""}
         sku={modal?.material.sku ?? ""}
-        unit={modal?.material.unit ?? ""}
+        unit={modal?.material.unit}
+        defaultQuantity={modal?.defaultQuantity}
         busy={actionBusy}
         errorMessage={actionError}
         onCancel={handleCloseModal}
@@ -363,6 +430,6 @@ export function Dashboard({ instanceName }: DashboardProps) {
         open={apiKeysOpen}
         onClose={() => setApiKeysOpen(false)}
       />
-    </main>
+    </div>
   );
 }

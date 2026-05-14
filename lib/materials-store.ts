@@ -5,7 +5,11 @@ import {
 } from "./supabase";
 import type { MaterialStatus, RawMaterial, RawMaterialView } from "./types";
 
-export type StoreErrorKind = "not_found" | "insufficient_stock" | "db_error";
+export type StoreErrorKind =
+  | "not_found"
+  | "insufficient_stock"
+  | "adjust_below_reserved"
+  | "db_error";
 
 export class StoreError extends Error {
   readonly kind: StoreErrorKind;
@@ -208,5 +212,22 @@ export async function restock(
   const newOnHand = current.on_hand + quantity;
   const status = statusFor(newOnHand, current.reserved, current.reorder_threshold);
   const updated = await writeRow(id, { on_hand: newOnHand, status });
+  return toView(updated);
+}
+
+export async function adjust(
+  id: string,
+  quantity: number,
+): Promise<RawMaterialView> {
+  const row = await readRow(id);
+  const current = toMaterial(row);
+  if (quantity < current.reserved) {
+    throw new StoreError(
+      "adjust_below_reserved",
+      "Cannot adjust on-hand below currently reserved units.",
+    );
+  }
+  const status = statusFor(quantity, current.reserved, current.reorder_threshold);
+  const updated = await writeRow(id, { on_hand: quantity, status });
   return toView(updated);
 }
