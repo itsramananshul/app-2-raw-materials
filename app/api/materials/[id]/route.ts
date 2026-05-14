@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticate } from "@/lib/authenticate";
-import { errorResponse } from "@/lib/api-helpers";
+import { CORS_HEADERS, errorResponse, optionsResponse } from "@/lib/api-helpers";
 import { StoreError, getMaterial } from "@/lib/materials-store";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,7 @@ export async function GET(
   try {
     const material = await getMaterial(params.id);
     if (!material) return errorResponse(404, "Material not found");
-    return NextResponse.json(material);
+    return NextResponse.json(material, { headers: CORS_HEADERS });
   } catch (e) {
     if (e instanceof StoreError) {
       return errorResponse(500, e.message || "Failed to load material");
@@ -24,3 +24,5 @@ export async function GET(
     return errorResponse(500, message);
   }
 }
+
+export const OPTIONS = optionsResponse;
