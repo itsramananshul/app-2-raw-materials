@@ -1,0 +1,112 @@
+-- APP 2 — Raw Materials Inventory: seed for Factory 1–4.
+-- Run AFTER schema.sql. Idempotent upsert — re-running resets to seed values.
+--
+-- Same 10 raw-material SKUs across each factory, with deliberately different
+-- on-hand, reserved, lead_time and daily_consumption values so each line
+-- looks operationally distinct.
+
+insert into public.raw_materials
+  (instance_name, sku, name, category, unit,
+   on_hand, reserved, reorder_threshold,
+   supplier, lead_time_days, daily_consumption, status)
+values
+  -- ─── Factory 1 — baseline supply, one OUT_OF_STOCK ──────────────────
+  ('Factory 1','STL-COIL-001','Steel Coils',         'Metals',     'rolls',
+     500,   50, 200, 'Acme Steel Works',    7,  30, 'OK'),
+  ('Factory 1','ALU-SHT-002', 'Aluminum Sheets',     'Metals',     'units',
+     800,  100, 300, 'BrightAlloy Inc',    10,  40, 'OK'),
+  ('Factory 1','CPR-WIR-003', 'Copper Wire',         'Metals',     'rolls',
+      12,    4,  15, 'Helix Conductors',   14,   1, 'LOW_STOCK'),
+  ('Factory 1','RBR-SLS-004', 'Rubber Seals',        'Polymers',   'units',
+     600,   80, 250, 'SealMate Corp',       5,  20, 'OK'),
+  ('Factory 1','PLS-PLT-005', 'Plastic Pellets',     'Polymers',   'kg',
+    1500,  200, 500, 'Polychem Industries', 7,  60, 'OK'),
+  ('Factory 1','HYD-FLD-006', 'Hydraulic Fluid',     'Fluids',     'liters',
+      80,   10, 100, 'FluidTech Ltd',      10,   5, 'LOW_STOCK'),
+  ('Factory 1','IND-LUB-007', 'Industrial Lubricant','Fluids',     'liters',
+     200,   30,  80, 'Lubricore',           7,   8, 'OK'),
+  ('Factory 1','PNT-BSE-008', 'Paint Base Coat',     'Chemicals',  'liters',
+       0,    0,  50, 'ColorBase Co',       14,   5, 'OUT_OF_STOCK'),
+  ('Factory 1','CIR-BRD-009', 'Circuit Boards',      'Electronics','units',
+     150,   40,  60, 'MicroBoards Inc',    21,   3, 'OK'),
+  ('Factory 1','FAS-BLK-010', 'Fasteners Bulk',      'Hardware',   'units',
+    5000,  500,1000, 'BoltMaster',          5, 100, 'OK'),
+
+  -- ─── Factory 2 — heavier metal/electronics line, mixed alerts ──────
+  ('Factory 2','STL-COIL-001','Steel Coils',         'Metals',     'rolls',
+     200,   80, 200, 'Acme Steel Works',    7,  40, 'LOW_STOCK'),
+  ('Factory 2','ALU-SHT-002', 'Aluminum Sheets',     'Metals',     'units',
+    1200,  200, 300, 'BrightAlloy Inc',    10,  60, 'OK'),
+  ('Factory 2','CPR-WIR-003', 'Copper Wire',         'Metals',     'rolls',
+      25,    5,  15, 'Helix Conductors',   14,   2, 'OK'),
+  ('Factory 2','RBR-SLS-004', 'Rubber Seals',        'Polymers',   'units',
+     400,   50, 250, 'SealMate Corp',       5,  25, 'OK'),
+  ('Factory 2','PLS-PLT-005', 'Plastic Pellets',     'Polymers',   'kg',
+     600,  200, 500, 'Polychem Industries', 7,  80, 'LOW_STOCK'),
+  ('Factory 2','HYD-FLD-006', 'Hydraulic Fluid',     'Fluids',     'liters',
+     350,   50, 100, 'FluidTech Ltd',      10,  10, 'OK'),
+  ('Factory 2','IND-LUB-007', 'Industrial Lubricant','Fluids',     'liters',
+      50,    8,  80, 'Lubricore',           7,  12, 'LOW_STOCK'),
+  ('Factory 2','PNT-BSE-008', 'Paint Base Coat',     'Chemicals',  'liters',
+      80,   10,  50, 'ColorBase Co',       14,   6, 'OK'),
+  ('Factory 2','CIR-BRD-009', 'Circuit Boards',      'Electronics','units',
+      80,   25,  60, 'MicroBoards Inc',    21,   4, 'LOW_STOCK'),
+  ('Factory 2','FAS-BLK-010', 'Fasteners Bulk',      'Hardware',   'units',
+    3000,  400,1000, 'BoltMaster',          5, 120, 'OK'),
+
+  -- ─── Factory 3 — starved line, many LOW + two OUT_OF_STOCK ─────────
+  ('Factory 3','STL-COIL-001','Steel Coils',         'Metals',     'rolls',
+      80,   30, 200, 'Acme Steel Works',    7,  25, 'LOW_STOCK'),
+  ('Factory 3','ALU-SHT-002', 'Aluminum Sheets',     'Metals',     'units',
+     150,   50, 300, 'BrightAlloy Inc',    10,  30, 'LOW_STOCK'),
+  ('Factory 3','CPR-WIR-003', 'Copper Wire',         'Metals',     'rolls',
+       0,    0,  15, 'Helix Conductors',   14,   2, 'OUT_OF_STOCK'),
+  ('Factory 3','RBR-SLS-004', 'Rubber Seals',        'Polymers',   'units',
+     100,   30, 250, 'SealMate Corp',       5,  15, 'LOW_STOCK'),
+  ('Factory 3','PLS-PLT-005', 'Plastic Pellets',     'Polymers',   'kg',
+     200,   50, 500, 'Polychem Industries', 7,  50, 'LOW_STOCK'),
+  ('Factory 3','HYD-FLD-006', 'Hydraulic Fluid',     'Fluids',     'liters',
+       0,    0, 100, 'FluidTech Ltd',      10,   8, 'OUT_OF_STOCK'),
+  ('Factory 3','IND-LUB-007', 'Industrial Lubricant','Fluids',     'liters',
+      30,    5,  80, 'Lubricore',           7,   6, 'LOW_STOCK'),
+  ('Factory 3','PNT-BSE-008', 'Paint Base Coat',     'Chemicals',  'liters',
+      40,   10,  50, 'ColorBase Co',       14,   4, 'LOW_STOCK'),
+  ('Factory 3','CIR-BRD-009', 'Circuit Boards',      'Electronics','units',
+      20,   10,  60, 'MicroBoards Inc',    21,   2, 'LOW_STOCK'),
+  ('Factory 3','FAS-BLK-010', 'Fasteners Bulk',      'Hardware',   'units',
+     600,  100,1000, 'BoltMaster',          5,  80, 'LOW_STOCK'),
+
+  -- ─── Factory 4 — high-throughput, heavy reservations ───────────────
+  ('Factory 4','STL-COIL-001','Steel Coils',         'Metals',     'rolls',
+     800,  500, 200, 'Acme Steel Works',    7,  50, 'OK'),
+  ('Factory 4','ALU-SHT-002', 'Aluminum Sheets',     'Metals',     'units',
+    1500, 1100, 300, 'BrightAlloy Inc',    10,  80, 'OK'),
+  ('Factory 4','CPR-WIR-003', 'Copper Wire',         'Metals',     'rolls',
+      60,   50,  15, 'Helix Conductors',   14,   3, 'LOW_STOCK'),
+  ('Factory 4','RBR-SLS-004', 'Rubber Seals',        'Polymers',   'units',
+     800,  600, 250, 'SealMate Corp',       5,  30, 'LOW_STOCK'),
+  ('Factory 4','PLS-PLT-005', 'Plastic Pellets',     'Polymers',   'kg',
+    2000, 1700, 500, 'Polychem Industries', 7, 100, 'LOW_STOCK'),
+  ('Factory 4','HYD-FLD-006', 'Hydraulic Fluid',     'Fluids',     'liters',
+     400,  280, 100, 'FluidTech Ltd',      10,  15, 'OK'),
+  ('Factory 4','IND-LUB-007', 'Industrial Lubricant','Fluids',     'liters',
+     250,  200,  80, 'Lubricore',           7,  10, 'LOW_STOCK'),
+  ('Factory 4','PNT-BSE-008', 'Paint Base Coat',     'Chemicals',  'liters',
+     150,  110,  50, 'ColorBase Co',       14,   8, 'LOW_STOCK'),
+  ('Factory 4','CIR-BRD-009', 'Circuit Boards',      'Electronics','units',
+     200,  160,  60, 'MicroBoards Inc',    21,   5, 'LOW_STOCK'),
+  ('Factory 4','FAS-BLK-010', 'Fasteners Bulk',      'Hardware',   'units',
+    7500, 6800,1000, 'BoltMaster',          5, 200, 'LOW_STOCK')
+
+on conflict (instance_name, sku) do update set
+  name              = excluded.name,
+  category          = excluded.category,
+  unit              = excluded.unit,
+  on_hand           = excluded.on_hand,
+  reserved          = excluded.reserved,
+  reorder_threshold = excluded.reorder_threshold,
+  supplier          = excluded.supplier,
+  lead_time_days    = excluded.lead_time_days,
+  daily_consumption = excluded.daily_consumption,
+  status            = excluded.status,
+  updated_at        = now();
