@@ -296,11 +296,22 @@ export function Dashboard({ instanceName }: DashboardProps) {
         onOpenApiKeys={() => setApiKeysOpen(true)}
       />
 
-      {activeNav !== "raw-materials" ? (
-        <ComingSoonPanel
-          label={activeNav}
-          onBack={() => setActiveNav("raw-materials")}
+      {activeNav === "dashboard" ? (
+        <OverviewView
+          materials={materials}
+          stats={stats}
+          onOpenBreakdown={() => setBreakdownOpen(true)}
         />
+      ) : activeNav === "work-orders" ? (
+        <WorkOrdersView
+          materials={materials}
+          onAdjust={(m) => openAction(m, "adjust")}
+          onReorder={(m) => openAction(m, "restock")}
+        />
+      ) : activeNav === "vendors" ? (
+        <VendorsView materials={materials} />
+      ) : activeNav === "reports" ? (
+        <ReportsView materials={materials} stats={stats} />
       ) : (
         <main style={{ padding: "20px", maxWidth: 1400, margin: "0 auto" }}>
           {/* KPI row */}
@@ -1064,57 +1075,648 @@ function BreakdownModal({
   );
 }
 
-function ComingSoonPanel({
-  label,
-  onBack,
+// ─── Derived views ────────────────────────────────────────────────────────
+
+const STATUS_DOT: Record<MaterialStatus, string> = {
+  OK: "#0d9488",
+  LOW_STOCK: "#f59e0b",
+  OUT_OF_STOCK: "#ef4444",
+};
+
+function OverviewView({
+  materials,
+  stats,
+  onOpenBreakdown,
 }: {
-  label: string;
-  onBack: () => void;
+  materials: RawMaterialView[] | null;
+  stats: { totalSkus: number; lowCount: number; criticalCount: number; totalOnHand: number };
+  onOpenBreakdown: () => void;
 }) {
-  const title = label
-    .split("-")
-    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-    .join(" ");
+  const list = materials ?? [];
+  const statusCounts: Record<MaterialStatus, number> = {
+    OK: 0,
+    LOW_STOCK: 0,
+    OUT_OF_STOCK: 0,
+  };
+  for (const m of list) statusCounts[m.status] += 1;
+  const total = Math.max(1, list.length);
+  const catBars = (() => {
+    const m = new Map<string, number>();
+    for (const x of list) m.set(x.category, (m.get(x.category) ?? 0) + x.on_hand);
+    return Array.from(m.entries())
+      .map(([category, onHand]) => ({ category, onHand }))
+      .sort((a, b) => b.onHand - a.onHand)
+      .slice(0, 8);
+  })();
+  const catMax = catBars.reduce((mx, b) => Math.max(mx, b.onHand), 0) || 1;
+  const criticalRows = list.filter(isCritical).slice(0, 5);
+
   return (
-    <main style={{ padding: 40, maxWidth: 800, margin: "0 auto" }}>
+    <main style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
       <div
         style={{
-          background: "#ffffff",
-          border: "1px solid #e2e8f0",
-          borderRadius: 10,
-          padding: 32,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-          textAlign: "center",
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 12,
         }}
       >
-        <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
-          {title}
-        </div>
-        <h2 style={{ fontSize: 20, fontWeight: 600, color: "#0f172a", marginTop: 8 }}>
-          {title} — coming soon
-        </h2>
-        <p style={{ fontSize: 13, color: "#64748b", marginTop: 8 }}>
-          This view isn&apos;t built yet for this instance. Switch back to Raw
-          Materials to manage inventory.
-        </p>
-        <button
-          type="button"
-          onClick={onBack}
-          style={{
-            marginTop: 16,
-            background: "#0d9488",
-            color: "#ffffff",
-            border: "none",
-            padding: "8px 16px",
-            borderRadius: 6,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
-          ← Back to Raw Materials
-        </button>
+        <KpiTile label="Total SKUs" value={stats.totalSkus} />
+        <KpiTile label="Low Stock" value={stats.lowCount} color="#f59e0b" />
+        <KpiTile label="Critical" value={stats.criticalCount} color="#ef4444" />
+        <KpiTile
+          label="Total On Hand"
+          value={stats.totalOnHand.toLocaleString()}
+          actionLabel="View breakdown →"
+          onClick={onOpenBreakdown}
+        />
+      </div>
+
+      <div
+        style={{
+          marginTop: 16,
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 12,
+        }}
+      >
+        <Card title="Status breakdown">
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+            {(Object.keys(statusCounts) as MaterialStatus[]).map((k) => {
+              const pct = (statusCounts[k] / total) * 100;
+              return (
+                <li key={k} style={{ fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ color: "#0f172a" }}>{STATUS_PILL[k].label}</span>
+                    <span style={{ color: "#64748b", fontVariantNumeric: "tabular-nums" }}>
+                      {statusCounts[k]}
+                    </span>
+                  </div>
+                  <div style={{ height: 6, background: "#f1f5f9", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", background: STATUS_DOT[k] }} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+        <Card title="Top categories by on-hand units">
+          {catBars.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 12 }}>No materials loaded.</div>
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+              {catBars.map((b) => (
+                <li key={b.category} style={{ fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "#0f172a" }}>{b.category}</span>
+                    <span style={{ color: "#64748b", fontVariantNumeric: "tabular-nums" }}>
+                      {b.onHand.toLocaleString()}
+                    </span>
+                  </div>
+                  <div style={{ height: 4, background: "#f1f5f9", borderRadius: 4, overflow: "hidden", marginTop: 4 }}>
+                    <div style={{ width: `${(b.onHand / catMax) * 100}%`, height: "100%", background: "#0d9488" }} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Card title={`Critical items — needs immediate attention (${criticalRows.length})`}>
+          {criticalRows.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 12 }}>
+              No critical materials right now. ✓
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <tbody>
+                {criticalRows.map((m) => (
+                  <tr key={m.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "8px 0", color: "#0f172a", fontWeight: 500 }}>{m.name}</td>
+                    <td style={{ padding: "8px 0", color: "#64748b", fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{m.sku}</td>
+                    <td style={{ padding: "8px 0", color: "#475569", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                      {m.on_hand} / {m.reorder_threshold} {m.unit}
+                    </td>
+                    <td style={{ padding: "8px 0", textAlign: "right" }}>
+                      <span
+                        style={{
+                          background: STATUS_PILL.OUT_OF_STOCK.bg,
+                          color: STATUS_PILL.OUT_OF_STOCK.fg,
+                          padding: "2px 10px",
+                          borderRadius: 12,
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Critical
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
       </div>
     </main>
+  );
+}
+
+function WorkOrdersView({
+  materials,
+  onAdjust,
+  onReorder,
+}: {
+  materials: RawMaterialView[] | null;
+  onAdjust: (m: RawMaterialView) => void;
+  onReorder: (m: RawMaterialView) => void;
+}) {
+  const list = materials ?? [];
+  const queue = list
+    .filter((m) => isLow(m) || isCritical(m))
+    .sort((a, b) => {
+      const aCrit = isCritical(a) ? 1 : 0;
+      const bCrit = isCritical(b) ? 1 : 0;
+      if (aCrit !== bCrit) return bCrit - aCrit;
+      const aDays = a.days_until_stockout ?? 9999;
+      const bDays = b.days_until_stockout ?? 9999;
+      return aDays - bDays;
+    });
+
+  return (
+    <main style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+          marginBottom: 16,
+        }}
+      >
+        <KpiTile label="In Queue" value={queue.length} />
+        <KpiTile
+          label="Critical"
+          value={queue.filter(isCritical).length}
+          color="#ef4444"
+        />
+        <KpiTile
+          label="At Risk (Low)"
+          value={queue.filter((m) => isLow(m) && !isCritical(m)).length}
+          color="#f59e0b"
+        />
+      </div>
+
+      <Card title={`Reorder queue · ${queue.length}`}>
+        {queue.length === 0 ? (
+          <div style={{ color: "#94a3b8", fontSize: 13, padding: 12 }}>
+            No materials currently below their reorder threshold. Stock levels
+            look healthy.
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                <Th>Material</Th>
+                <Th>Supplier</Th>
+                <Th align="right">On Hand</Th>
+                <Th align="right">Minimum</Th>
+                <Th align="right">Days until stockout</Th>
+                <Th>Status</Th>
+                <Th align="right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {queue.map((m) => {
+                const critical = isCritical(m);
+                return (
+                  <tr key={m.id} style={{ borderTop: "1px solid #f1f5f9" }}>
+                    <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 500 }}>
+                      {m.name}
+                      <div style={{ fontSize: 10, color: "#94a3b8", fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+                        {m.sku}
+                      </div>
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "#475569" }}>{m.supplier || "—"}</td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>
+                      {m.on_hand} {m.unit}
+                    </td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", color: "#64748b", fontVariantNumeric: "tabular-nums" }}>
+                      {m.reorder_threshold}
+                    </td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+                      {m.days_until_stockout === null ? "—" : `${m.days_until_stockout}d`}
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <span
+                        style={{
+                          background: critical ? STATUS_PILL.OUT_OF_STOCK.bg : STATUS_PILL.LOW_STOCK.bg,
+                          color: critical ? STATUS_PILL.OUT_OF_STOCK.fg : STATUS_PILL.LOW_STOCK.fg,
+                          padding: "2px 10px",
+                          borderRadius: 12,
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      >
+                        {critical ? "Critical" : "Low"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button type="button" onClick={() => onAdjust(m)} style={rowBtnStyle}>
+                        Adjust
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onReorder(m)}
+                        style={{
+                          ...rowBtnStyle,
+                          marginLeft: 6,
+                          background: "#0d9488",
+                          color: "#ffffff",
+                          border: "1px solid #0d9488",
+                        }}
+                      >
+                        Reorder
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </main>
+  );
+}
+
+function VendorsView({ materials }: { materials: RawMaterialView[] | null }) {
+  const [search, setSearch] = useState("");
+  const list = materials ?? [];
+  const groups = useMemo(() => {
+    const m = new Map<
+      string,
+      {
+        supplier: string;
+        skuCount: number;
+        onHand: number;
+        lowCount: number;
+        avgLead: number;
+        categories: Set<string>;
+      }
+    >();
+    for (const x of list) {
+      const key = x.supplier || "—";
+      const g =
+        m.get(key) ??
+        { supplier: key, skuCount: 0, onHand: 0, lowCount: 0, avgLead: 0, categories: new Set() };
+      g.skuCount += 1;
+      g.onHand += x.on_hand;
+      if (isLow(x) || isCritical(x)) g.lowCount += 1;
+      g.avgLead += x.lead_time_days;
+      g.categories.add(x.category);
+      m.set(key, g);
+    }
+    return Array.from(m.values())
+      .map((g) => ({ ...g, avgLead: Math.round(g.avgLead / Math.max(1, g.skuCount)) }))
+      .sort((a, b) => b.skuCount - a.skuCount);
+  }, [list]);
+
+  const q = search.trim().toLowerCase();
+  const filtered = q ? groups.filter((g) => g.supplier.toLowerCase().includes(q)) : groups;
+
+  return (
+    <main style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
+      <Card
+        title={`Vendors · ${filtered.length} of ${groups.length}`}
+        toolbar={
+          <input
+            type="search"
+            placeholder="Search vendors…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              width: 220,
+              background: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: 6,
+              padding: "6px 10px",
+              fontSize: 12,
+              color: "#0f172a",
+              outline: "none",
+            }}
+          />
+        }
+      >
+        {filtered.length === 0 ? (
+          <div style={{ color: "#94a3b8", fontSize: 13, padding: 12 }}>
+            No vendors match the search.
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#f8fafc" }}>
+                <Th>Supplier</Th>
+                <Th align="right">SKUs supplied</Th>
+                <Th align="right">Total on hand</Th>
+                <Th align="right">Needing reorder</Th>
+                <Th align="right">Avg lead time</Th>
+                <Th>Categories</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((g) => (
+                <tr key={g.supplier} style={{ borderTop: "1px solid #f1f5f9" }}>
+                  <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 500 }}>
+                    {g.supplier}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", color: "#0f172a", fontVariantNumeric: "tabular-nums" }}>
+                    {g.skuCount}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+                    {g.onHand.toLocaleString()}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 14px",
+                      textAlign: "right",
+                      color: g.lowCount > 0 ? "#ef4444" : "#475569",
+                      fontVariantNumeric: "tabular-nums",
+                      fontWeight: g.lowCount > 0 ? 600 : 400,
+                    }}
+                  >
+                    {g.lowCount}
+                  </td>
+                  <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+                    {g.avgLead}d
+                  </td>
+                  <td style={{ padding: "10px 14px", color: "#64748b" }}>
+                    {Array.from(g.categories).slice(0, 3).join(", ")}
+                    {g.categories.size > 3 ? ` +${g.categories.size - 3}` : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Card>
+    </main>
+  );
+}
+
+function ReportsView({
+  materials,
+  stats,
+}: {
+  materials: RawMaterialView[] | null;
+  stats: { totalSkus: number; lowCount: number; criticalCount: number; totalOnHand: number };
+}) {
+  const list = materials ?? [];
+  const totalDailyBurn = list.reduce((s, m) => s + m.daily_consumption, 0);
+  const totalReserved = list.reduce((s, m) => s + m.reserved, 0);
+  const avgLead = list.length === 0
+    ? 0
+    : Math.round(list.reduce((s, m) => s + m.lead_time_days, 0) / list.length);
+
+  // Status by category — stacked counts
+  const grid = (() => {
+    const m = new Map<string, { ok: number; low: number; out: number }>();
+    for (const x of list) {
+      const g = m.get(x.category) ?? { ok: 0, low: 0, out: 0 };
+      if (x.status === "OK") g.ok += 1;
+      else if (x.status === "LOW_STOCK") g.low += 1;
+      else g.out += 1;
+      m.set(x.category, g);
+    }
+    return Array.from(m.entries())
+      .map(([category, v]) => ({ category, ...v, total: v.ok + v.low + v.out }))
+      .sort((a, b) => b.total - a.total);
+  })();
+
+  return (
+    <main style={{ padding: 20, maxWidth: 1400, margin: "0 auto" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <KpiTile label="SKUs" value={stats.totalSkus} />
+        <KpiTile label="Total on hand" value={stats.totalOnHand.toLocaleString()} />
+        <KpiTile label="Daily burn" value={totalDailyBurn.toLocaleString()} />
+        <KpiTile label="Avg lead time" value={`${avgLead}d`} />
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Card title="Status by category">
+          {grid.length === 0 ? (
+            <div style={{ color: "#94a3b8", fontSize: 13 }}>No materials loaded.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#f8fafc" }}>
+                  <Th>Category</Th>
+                  <Th align="right">OK</Th>
+                  <Th align="right">Low</Th>
+                  <Th align="right">Critical</Th>
+                  <Th>Distribution</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {grid.map((row) => {
+                  const okPct = (row.ok / row.total) * 100;
+                  const lowPct = (row.low / row.total) * 100;
+                  const outPct = (row.out / row.total) * 100;
+                  return (
+                    <tr key={row.category} style={{ borderTop: "1px solid #f1f5f9" }}>
+                      <td style={{ padding: "10px 14px", color: "#0f172a", fontWeight: 500 }}>{row.category}</td>
+                      <td style={{ padding: "10px 14px", textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>
+                        {row.ok}
+                      </td>
+                      <td style={{ padding: "10px 14px", textAlign: "right", color: row.low > 0 ? "#f59e0b" : "#475569", fontVariantNumeric: "tabular-nums" }}>
+                        {row.low}
+                      </td>
+                      <td style={{ padding: "10px 14px", textAlign: "right", color: row.out > 0 ? "#ef4444" : "#475569", fontVariantNumeric: "tabular-nums" }}>
+                        {row.out}
+                      </td>
+                      <td style={{ padding: "10px 14px", minWidth: 180 }}>
+                        <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", background: "#f1f5f9" }}>
+                          {okPct > 0 ? <div style={{ width: `${okPct}%`, background: "#0d9488" }} /> : null}
+                          {lowPct > 0 ? <div style={{ width: `${lowPct}%`, background: "#f59e0b" }} /> : null}
+                          {outPct > 0 ? <div style={{ width: `${outPct}%`, background: "#ef4444" }} /> : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Card title="Pipeline snapshot">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+            <Stat label="Total reserved" value={totalReserved.toLocaleString()} />
+            <Stat label="Total available" value={(stats.totalOnHand - totalReserved).toLocaleString()} />
+            <Stat label="Healthy SKUs" value={stats.totalSkus - stats.lowCount} />
+          </div>
+        </Card>
+      </div>
+    </main>
+  );
+}
+
+// ─── Shared bits ──────────────────────────────────────────────────────────
+
+function KpiTile({
+  label,
+  value,
+  color = "#0f172a",
+  actionLabel,
+  onClick,
+}: {
+  label: string;
+  value: number | string;
+  color?: string;
+  actionLabel?: string;
+  onClick?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 10,
+        padding: "14px 16px",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          color: "#64748b",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 22,
+          fontWeight: 700,
+          color,
+          marginTop: 6,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
+      {actionLabel ? (
+        <button
+          type="button"
+          onClick={onClick}
+          style={{
+            background: "none",
+            border: "none",
+            color: "#0d9488",
+            fontSize: 11,
+            padding: 0,
+            marginTop: 4,
+            cursor: "pointer",
+            textAlign: "left",
+          }}
+        >
+          {actionLabel}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function Card({
+  title,
+  toolbar,
+  children,
+}: {
+  title: string;
+  toolbar?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 10,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "12px 16px",
+          borderBottom: "1px solid #e2e8f0",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+        }}
+      >
+        <h3 style={{ fontSize: 13, fontWeight: 600, color: "#0f172a" }}>{title}</h3>
+        {toolbar ? <div style={{ marginLeft: "auto" }}>{toolbar}</div> : null}
+      </div>
+      <div style={{ padding: 12 }}>{children}</div>
+    </div>
+  );
+}
+
+function Th({
+  children,
+  align,
+}: {
+  children: React.ReactNode;
+  align?: "right" | "left";
+}) {
+  return (
+    <th
+      style={{
+        padding: "10px 14px",
+        textAlign: align ?? "left",
+        color: "#64748b",
+        fontSize: 11,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+        fontWeight: 600,
+        borderBottom: "1px solid #e2e8f0",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 10,
+          color: "#64748b",
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 20, fontWeight: 700, color: "#0f172a", marginTop: 4, fontVariantNumeric: "tabular-nums" }}>
+        {value}
+      </div>
+    </div>
   );
 }
