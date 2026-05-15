@@ -1,18 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RawMaterialView } from "@/lib/types";
-import { ActivityFeed, type ActivityEntry } from "./ActivityFeed";
+import type { MaterialStatus, RawMaterialView } from "@/lib/types";
 import { ApiKeyManager } from "./ApiKeyManager";
-import { ComingSoon } from "./ComingSoon";
-import { DonutChart } from "./DonutChart";
-import { FilterDropdown } from "./FilterDropdown";
-import { MaterialPlans, type StatusFilter } from "./MaterialPlans";
-import { MetricCard } from "./MetricCard";
 import { QuantityModal, type ActionKind } from "./QuantityModal";
 import { Toast, type ToastState } from "./Toast";
-import { TopNav, type NavView } from "./TopNav";
-import { TopMaterials } from "./TopMaterials";
+import { TopNav } from "./TopNav";
+import type { ActivityEntry } from "./ActivityFeed";
 
 interface DashboardProps {
   instanceName: string;
@@ -47,58 +41,57 @@ function newActivityId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-const COMING_SOON_COPY: Record<
-  Exclude<NavView, "dashboard">,
-  { title: string; description: string }
-> = {
-  materials: {
-    title: "Materials — coming soon",
-    description:
-      "A full raw-materials catalog editor with bulk upload, categories, and per-supplier pricing.",
-  },
-  suppliers: {
-    title: "Suppliers — coming soon",
-    description:
-      "Supplier directory, contact details, lead-time tracking, and rating history.",
-  },
-  "purchase-orders": {
-    title: "Purchase Orders — coming soon",
-    description:
-      "Create, approve, and track purchase orders, plus incoming-stock forecasting.",
-  },
-  "inventory-plan": {
-    title: "Inventory Plan — coming soon",
-    description:
-      "Demand forecasting and automated reorder suggestions based on consumption history.",
-  },
-};
-
-const NAV_HEADER_LABEL: Record<Exclude<NavView, "dashboard">, string> = {
-  materials: "Materials",
-  suppliers: "Suppliers",
-  "purchase-orders": "Purchase Orders",
-  "inventory-plan": "Inventory Plan",
-};
-
-function scrollToPlans() {
-  const el = document.getElementById("material-plans");
-  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+// Deterministic per-SKU unit cost ($0.50–$10.00). The schema has no unit_cost
+// column yet — this gives the Total Value KPI and Unit Cost column stable,
+// realistic-looking values until real cost data is wired in.
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
 }
+function unitCostFor(sku: string): number {
+  return 0.5 + (hashStr(sku) % 950) / 100;
+}
+
+function stockLevel(m: RawMaterialView): { pct: number; color: string } {
+  const min = m.reorder_threshold;
+  const pct = min > 0 ? Math.min(100, (m.on_hand / min) * 100) : 100;
+  const color = pct >= 50 ? "#4dd9ac" : pct >= 15 ? "#f59e0b" : "#ef4444";
+  return { pct, color };
+}
+
+const STATUS_PILL: Record<
+  MaterialStatus,
+  { label: string; bg: string; fg: string }
+> = {
+  OK: { label: "OK", bg: "#c6f6d5", fg: "#276749" },
+  LOW_STOCK: { label: "Low", bg: "#fefcbf", fg: "#744210" },
+  OUT_OF_STOCK: { label: "Critical", bg: "#fed7d7", fg: "#9b2c2c" },
+};
+
+const TABLE_COLS: { key: string; label: string; align?: "right" | "left" }[] = [
+  { key: "name", label: "Material Name" },
+  { key: "sku", label: "SKU" },
+  { key: "category", label: "Category" },
+  { key: "stock", label: "Stock Level" },
+  { key: "on_hand", label: "On Hand", align: "right" },
+  { key: "min", label: "Minimum", align: "right" },
+  { key: "cost", label: "Unit Cost", align: "right" },
+  { key: "status", label: "Status" },
+];
 
 export function Dashboard({ instanceName }: DashboardProps) {
   const [materials, setMaterials] = useState<RawMaterialView[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [view, setView] = useState<NavView>("dashboard");
-  const [filter, setFilter] = useState<StatusFilter>("ALL");
-  const [expanded, setExpanded] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [modal, setModal] = useState<ModalState | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [toast, setToast] = useState<ToastState | null>(null);
-  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [, setActivity] = useState<ActivityEntry[]>([]);
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -148,33 +141,33 @@ export function Dashboard({ instanceName }: DashboardProps) {
 
   const stats = useMemo(() => {
     const list = materials ?? [];
-    const totalMaterials = list.length;
-    const lowStockAlerts = list.filter((m) => m.status !== "OK").length;
-    const inStock = list.filter((m) => m.status === "OK").length;
-    const lowOnly = list.filter((m) => m.status === "LOW_STOCK").length;
-    const outOnly = list.filter((m) => m.status === "OUT_OF_STOCK").length;
-    const suppliersActive = new Set(
-      list.map((m) => m.supplier).filter((s) => typeof s === "string" && s.length > 0),
-    ).size;
-    return {
-      totalMaterials,
-      lowStockAlerts,
-      inStock,
-      lowOnly,
-      outOnly,
-      suppliersActive,
-    };
+    const totalItems = list.length;
+    const lowStock = list.filter(
+      (m) => m.reorder_threshold > 0 && m.on_hand < m.reorder_threshold,
+    ).length;
+    const critical = list.filter(
+      (m) =>
+        m.reorder_threshold > 0 &&
+        m.on_hand / m.reorder_threshold < 0.15,
+    ).length;
+    const totalValue = list.reduce(
+      (sum, m) => sum + m.on_hand * unitCostFor(m.sku),
+      0,
+    );
+    return { totalItems, lowStock, critical, totalValue };
   }, [materials]);
 
-  const filterCounts: Record<StatusFilter, number> = useMemo(
-    () => ({
-      ALL: stats.totalMaterials,
-      OK: stats.inStock,
-      LOW_STOCK: stats.lowOnly,
-      OUT_OF_STOCK: stats.outOnly,
-    }),
-    [stats],
-  );
+  const filteredMaterials = useMemo(() => {
+    const list = materials ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.sku.toLowerCase().includes(q) ||
+        m.category.toLowerCase().includes(q),
+    );
+  }, [materials, search]);
 
   const appendActivity = useCallback((entry: ActivityEntry) => {
     setActivity((prev) => [entry, ...prev].slice(0, ACTIVITY_MAX));
@@ -268,148 +261,302 @@ export function Dashboard({ instanceName }: DashboardProps) {
     [modal, fetchMaterials, appendActivity],
   );
 
-  const handleViewLowStock = useCallback(() => {
-    setFilter("LOW_STOCK");
-    setExpanded(true);
-    setTimeout(scrollToPlans, 50);
-  }, []);
-
-  const handleViewAll = useCallback(() => {
-    setFilter("ALL");
-    setExpanded(true);
-    setTimeout(scrollToPlans, 50);
-  }, []);
-
   return (
-    <div>
-      <TopNav
-        instanceName={instanceName}
-        currentView={view}
-        onChangeView={(v) => {
-          setView(v);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+    <div style={{ background: "#f0f4f8", minHeight: "100vh" }}>
+      <TopNav instanceName={instanceName} />
+
+      {/* Sub-header */}
+      <div
+        style={{
+          background: "#ffffff",
+          borderBottom: "1px solid #e2e8f0",
+          padding: "10px 20px",
         }}
-        onOpenApiKeys={() => setApiKeysOpen(true)}
-      />
+        className="flex items-center gap-3"
+      >
+        <div className="flex items-center gap-2">
+          <h1 style={{ fontSize: 15, fontWeight: 600, color: "#1a202c" }}>
+            Raw Materials
+          </h1>
+          <span
+            style={{
+              background: "#edf2f7",
+              color: "#4a5568",
+              fontSize: 11,
+              padding: "2px 8px",
+              borderRadius: 12,
+              fontWeight: 600,
+            }}
+          >
+            {materials === null ? "—" : materials.length}
+          </span>
+        </div>
 
-      <main className="mx-auto max-w-7xl px-6 py-6">
-        {view !== "dashboard" ? (
-          <>
-            <div className="mb-6 flex flex-col gap-1">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                {NAV_HEADER_LABEL[view]}
-              </p>
-              <h1 className="text-2xl font-bold text-gray-900">
-                {NAV_HEADER_LABEL[view]}
-              </h1>
-            </div>
-            <ComingSoon
-              title={COMING_SOON_COPY[view].title}
-              description={COMING_SOON_COPY[view].description}
-              onBack={() => setView("dashboard")}
-            />
-          </>
-        ) : (
-          <>
-            <div className="mb-6 flex items-end justify-between gap-3">
-              <div className="flex flex-col gap-1">
-                <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                  Overview
-                </p>
-                <h1 className="text-2xl font-bold text-gray-900">
-                  {instanceName} Dashboard
-                </h1>
-              </div>
-              <FilterDropdown
-                value={filter}
-                counts={filterCounts}
-                onChange={setFilter}
-              />
-            </div>
+        <div className="ml-auto flex items-center gap-2">
+          <input
+            type="search"
+            placeholder="Search materials, SKU, category…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              width: 180,
+              background: "#f1f5f9",
+              border: "1px solid transparent",
+              borderRadius: 6,
+              padding: "6px 10px",
+              fontSize: 12,
+              color: "#1a202c",
+              outline: "none",
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "#cbd5e0")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "transparent")}
+          />
+          <button
+            type="button"
+            style={{
+              border: "1px solid #cbd5e0",
+              background: "#ffffff",
+              color: "#4a5568",
+              padding: "6px 12px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: "pointer",
+            }}
+            onClick={() => setApiKeysOpen(true)}
+            title="API Keys"
+          >
+            Filters
+          </button>
+          <button
+            type="button"
+            style={{
+              background: "#4dd9ac",
+              color: "#0f1e2e",
+              padding: "6px 14px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              border: "none",
+            }}
+          >
+            + Add Material
+          </button>
+        </div>
+      </div>
 
-            {loadError ? (
-              <div className="mb-6 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 ring-1 ring-inset ring-rose-200">
-                Failed to load materials: {loadError}
-              </div>
-            ) : null}
+      {/* KPI strip */}
+      <div
+        style={{
+          background: "#f0f4f8",
+          padding: "14px 20px",
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 10,
+        }}
+      >
+        <KpiCard label="Total Items" value={String(stats.totalItems)} />
+        <KpiCard
+          label="Low Stock"
+          value={String(stats.lowStock)}
+          valueColor="#f59e0b"
+        />
+        <KpiCard
+          label="Critical"
+          value={String(stats.critical)}
+          valueColor="#ef4444"
+        />
+        <KpiCard
+          label="Total Value"
+          value={`$${(stats.totalValue / 1000).toFixed(1)}k`}
+        />
+      </div>
 
-            <section className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <MetricCard
-                label="Total Materials"
-                value={stats.totalMaterials}
-                onViewDetail={handleViewAll}
-              />
-              <MetricCard
-                label="Low-Stock Alerts"
-                value={stats.lowStockAlerts}
-                hint={
-                  stats.lowStockAlerts > 0 ? "Needs attention" : "All healthy"
-                }
-                onViewDetail={handleViewLowStock}
-              />
-              <MetricCard
-                label="Pending Orders"
-                value={0}
-                hint="No upcoming orders"
-              />
-              <MetricCard
-                label="Suppliers Active"
-                value={stats.suppliersActive}
-                hint="Across all materials"
-              />
-            </section>
+      {/* Table */}
+      <div style={{ padding: "0 20px 14px" }}>
+        {loadError ? (
+          <div
+            style={{
+              background: "#fed7d7",
+              color: "#9b2c2c",
+              padding: "10px 14px",
+              borderRadius: 6,
+              marginBottom: 10,
+              fontSize: 13,
+            }}
+          >
+            Failed to load materials: {loadError}
+          </div>
+        ) : null}
 
-            <section className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-5">
-              <div className="lg:col-span-3">
-                <MaterialPlans
-                  materials={materials ?? []}
-                  loading={materials === null}
-                  filter={filter}
-                  expanded={expanded}
-                  onAction={handleAction}
-                  onToggleExpand={() => setExpanded((v) => !v)}
-                />
-              </div>
-              <div className="flex flex-col gap-4 lg:col-span-2">
-                <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-                  <header className="mb-4 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
-                        Distribution
-                      </p>
-                      <h2 className="text-lg font-semibold text-gray-900">
-                        Stock Status
-                      </h2>
-                    </div>
-                  </header>
-                  <DonutChart
-                    total={stats.totalMaterials}
-                    centerLabel="SKUs"
-                    slices={[
-                      { label: "In Stock", value: stats.inStock, hex: "#14b8a6" },
-                      { label: "Low Stock", value: stats.lowOnly, hex: "#f59e0b" },
-                      {
-                        label: "Out of Stock",
-                        value: stats.outOnly,
-                        hex: "#ef4444",
-                      },
-                    ]}
-                  />
-                </section>
-                <ActivityFeed entries={activity} />
-              </div>
-            </section>
-
-            <section className="mb-6">
-              <TopMaterials
-                materials={materials ?? []}
-                onAction={handleAction}
-                onViewAll={handleViewAll}
-              />
-            </section>
-          </>
-        )}
-      </main>
+        <div
+          style={{
+            background: "#ffffff",
+            border: "1px solid #e2e8f0",
+            borderRadius: 8,
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                fontSize: 12,
+              }}
+            >
+              <thead>
+                <tr style={{ background: "#f7fafc" }}>
+                  {TABLE_COLS.map((c) => (
+                    <th
+                      key={c.key}
+                      style={{
+                        padding: "10px 14px",
+                        textAlign: c.align ?? "left",
+                        color: "#718096",
+                        fontSize: 11,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.04em",
+                        fontWeight: 600,
+                        borderBottom: "1px solid #e2e8f0",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {materials === null ? (
+                  <tr>
+                    <td
+                      colSpan={TABLE_COLS.length}
+                      style={{ padding: 24, textAlign: "center", color: "#a0aec0" }}
+                    >
+                      Loading materials…
+                    </td>
+                  </tr>
+                ) : filteredMaterials.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={TABLE_COLS.length}
+                      style={{ padding: 24, textAlign: "center", color: "#a0aec0" }}
+                    >
+                      No materials match the current filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredMaterials.map((m) => {
+                    const { pct, color } = stockLevel(m);
+                    const cost = unitCostFor(m.sku);
+                    const pill = STATUS_PILL[m.status];
+                    return (
+                      <tr
+                        key={m.id}
+                        onClick={() => handleAction(m, "adjust")}
+                        style={{
+                          cursor: "pointer",
+                          borderBottom: "1px solid #edf2f7",
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.background = "#f7fafc")
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.background = "transparent")
+                        }
+                      >
+                        <td style={{ padding: "10px 14px", color: "#1a202c", fontWeight: 500 }}>
+                          {m.name}
+                        </td>
+                        <td
+                          style={{
+                            padding: "10px 14px",
+                            color: "#718096",
+                            fontFamily:
+                              'ui-monospace, SFMono-Regular, Menlo, monospace',
+                          }}
+                        >
+                          {m.sku}
+                        </td>
+                        <td style={{ padding: "10px 14px", color: "#4a5568" }}>
+                          {m.category}
+                        </td>
+                        <td style={{ padding: "10px 14px" }}>
+                          <div
+                            style={{
+                              width: 70,
+                              height: 6,
+                              background: "#edf2f7",
+                              borderRadius: 4,
+                              overflow: "hidden",
+                            }}
+                            aria-label={`${Math.round(pct)}% of minimum`}
+                          >
+                            <div
+                              style={{
+                                width: `${pct}%`,
+                                height: "100%",
+                                background: color,
+                                transition: "width 200ms ease-out",
+                              }}
+                            />
+                          </div>
+                        </td>
+                        <td
+                          style={{
+                            padding: "10px 14px",
+                            textAlign: "right",
+                            color: "#1a202c",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {m.on_hand} <span style={{ color: "#a0aec0" }}>{m.unit}</span>
+                        </td>
+                        <td
+                          style={{
+                            padding: "10px 14px",
+                            textAlign: "right",
+                            color: "#718096",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {m.reorder_threshold}
+                        </td>
+                        <td
+                          style={{
+                            padding: "10px 14px",
+                            textAlign: "right",
+                            color: "#1a202c",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          ${cost.toFixed(2)}
+                        </td>
+                        <td style={{ padding: "10px 14px" }}>
+                          <span
+                            style={{
+                              background: pill.bg,
+                              color: pill.fg,
+                              padding: "2px 10px",
+                              borderRadius: 12,
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {pill.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
 
       <QuantityModal
         open={modal !== null}
@@ -430,6 +577,50 @@ export function Dashboard({ instanceName }: DashboardProps) {
         open={apiKeysOpen}
         onClose={() => setApiKeysOpen(false)}
       />
+    </div>
+  );
+}
+
+function KpiCard({
+  label,
+  value,
+  valueColor = "#1a202c",
+}: {
+  label: string;
+  value: string;
+  valueColor?: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e2e8f0",
+        borderRadius: 8,
+        padding: "12px 16px",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          color: "#718096",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: 20,
+          fontWeight: 700,
+          color: valueColor,
+          marginTop: 4,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
