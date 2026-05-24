@@ -12,13 +12,13 @@ import {
 } from "@/lib/materials-store";
 
 function err(message: string, status = 400) {
-  return NextResponse.json({ ok: false, error: message }, { status });
+  return NextResponse.json({ error: message }, { status });
 }
 
 function storeErr(e: unknown) {
   const kind = e instanceof StoreError ? e.kind : "internal_error";
   const status = e instanceof StoreError && e.kind === "not_found" ? 404 : 409;
-  return NextResponse.json({ ok: false, error: kind }, { status });
+  return NextResponse.json({ error: kind }, { status });
 }
 
 export async function POST(req: NextRequest) {
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     switch (action) {
       case "list": {
         const materials = await listMaterials();
-        return NextResponse.json({ ok: true, result: materials });
+        return NextResponse.json(materials);
       }
 
       case "get": {
@@ -49,21 +49,18 @@ export async function POST(req: NextRequest) {
           return err("id is required");
         const material = await getMaterial(params.id);
         if (!material) return err("Material not found", 404);
-        return NextResponse.json({ ok: true, result: material });
+        return NextResponse.json(material);
       }
 
       case "status": {
         const count = await materialCount();
         return NextResponse.json({
-          ok: true,
-          result: {
             instanceName: process.env.INSTANCE_NAME ?? "unknown",
             type: "raw_materials",
             materialCount: count,
             health: "ok",
             timestamp: new Date().toISOString(),
-          },
-        });
+          });
       }
 
       case "consume": {
@@ -71,7 +68,7 @@ export async function POST(req: NextRequest) {
           return err("id is required");
         try {
           const material = await consume(params.id, params.quantity as number);
-          return NextResponse.json({ ok: true, result: material });
+          return NextResponse.json(material);
         } catch (e) {
           return storeErr(e);
         }
@@ -82,7 +79,7 @@ export async function POST(req: NextRequest) {
           return err("id is required");
         try {
           const material = await reserve(params.id, params.quantity as number);
-          return NextResponse.json({ ok: true, result: material });
+          return NextResponse.json(material);
         } catch (e) {
           return storeErr(e);
         }
@@ -93,7 +90,7 @@ export async function POST(req: NextRequest) {
           return err("id is required");
         try {
           const material = await release(params.id, params.quantity as number);
-          return NextResponse.json({ ok: true, result: material });
+          return NextResponse.json(material);
         } catch (e) {
           return storeErr(e);
         }
@@ -104,7 +101,7 @@ export async function POST(req: NextRequest) {
           return err("id is required");
         try {
           const material = await restock(params.id, params.quantity as number);
-          return NextResponse.json({ ok: true, result: material });
+          return NextResponse.json(material);
         } catch (e) {
           return storeErr(e);
         }
@@ -115,7 +112,7 @@ export async function POST(req: NextRequest) {
           return err("id is required");
         try {
           const material = await adjust(params.id, params.quantity as number);
-          return NextResponse.json({ ok: true, result: material });
+          return NextResponse.json(material);
         } catch (e) {
           return storeErr(e);
         }
